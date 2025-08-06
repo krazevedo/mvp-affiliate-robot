@@ -1,0 +1,50 @@
+# Nome do nosso workflow de automação
+name: Shopee Offer Bot
+
+# Gatilho (trigger): quando o robô deve rodar
+on:
+  schedule:
+    # Roda a cada 2 horas (no minuto 0). Você pode ajustar o cron.
+    # Use https://crontab.guru/ para criar sua própria agenda.
+    - cron: '0 * * * *'
+  # Permite também que a gente rode manualmente pela interface do GitHub
+  workflow_dispatch:
+
+# Tarefas a serem executadas
+jobs:
+  build:
+    runs-on: ubuntu-latest # Usa uma máquina virtual Linux fresca a cada execução
+
+    steps:
+      # 1. Baixa o código do seu repositório para a máquina virtual
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Configura o ambiente Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 3. Instala as dependências do nosso script
+      - name: Install dependencies
+        run: pip install requests
+
+      # 4. Executa o nosso robô!
+      - name: Run Shopee Bot
+        run: python shopee_bot.py
+        env: # Mapeia os segredos que criamos para as variáveis de ambiente que o script espera
+          SHOPEE_PARTNER_ID: ${{ secrets.SHOPEE_PARTNER_ID }}
+          SHOPEE_API_KEY: ${{ secrets.SHOPEE_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      # 5. Salva o arquivo de histórico de volta no repositório
+      - name: Commit and push history file
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add historico_produtos.json
+          # Só faz o commit se houver alguma mudança no arquivo
+          git diff-index --quiet HEAD || git commit -m "Atualiza histórico de produtos"
+          git push
