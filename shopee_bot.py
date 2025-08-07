@@ -7,6 +7,7 @@ import random
 import os # Essencial para ler variáveis de ambiente
 import math # Precisaremos de matemática para a pontuação
 import google.generativeai as genai
+import sys
 
 # --- CONFIGURAÇÕES VINDAS DAS VARIÁVEIS DE AMBIENTE ---
 # O script vai ler estas informações do ambiente da Render, não mais diretamente do código.
@@ -15,6 +16,18 @@ SHOPEE_API_KEY = os.environ.get("SHOPEE_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+# Imprime o status de cada variável para depuração
+print(f"SHOPEE_PARTNER_ID: {'Carregado' if SHOPEE_PARTNER_ID else 'NÃO ENCONTRADO'}")
+print(f"SHOPEE_API_KEY: {'Carregado' if SHOPEE_API_KEY else 'NÃO ENCONTRADO'}")
+print(f"TELEGRAM_BOT_TOKEN: {'Carregado' if TELEGRAM_BOT_TOKEN else 'NÃO ENCONTRADO'}")
+print(f"TELEGRAM_CHAT_ID: {'Carregado' if TELEGRAM_CHAT_ID else 'NÃO ENCONTRADO'}")
+print(f"GEMINI_API_KEY: {'Carregado' if GEMINI_API_KEY else 'NÃO ENCONTRADO'}")
+
+# Validação Crítica: Se alguma chave estiver faltando, o robô para aqui.
+if not all([SHOPEE_PARTNER_ID, SHOPEE_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, GEMINI_API_KEY]):
+    print("\nERRO CRÍTICO: Uma ou mais variáveis de ambiente (segredos) não foram carregadas. Verifique as configurações no GitHub.")
+    sys.exit(1) # Encerra o script com um código de erro
 
 # URL da API da Shopee (não mexer)
 SHOPEE_API_URL = "https://open-api.affiliate.shopee.com.br/graphql"
