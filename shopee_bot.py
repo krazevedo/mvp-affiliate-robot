@@ -6,6 +6,7 @@ import json
 import random
 import os # Essencial para ler variáveis de ambiente
 import math # Precisaremos de matemática para a pontuação
+import google.generativeai as genai
 
 # --- CONFIGURAÇÕES VINDAS DAS VARIÁVEIS DE AMBIENTE ---
 # O script vai ler estas informações do ambiente da Render, não mais diretamente do código.
@@ -13,6 +14,7 @@ SHOPEE_PARTNER_ID = int(os.environ.get("SHOPEE_PARTNER_ID"))
 SHOPEE_API_KEY = os.environ.get("SHOPEE_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # URL da API da Shopee (não mexer)
 SHOPEE_API_URL = "https://open-api.affiliate.shopee.com.br/graphql"
@@ -32,6 +34,11 @@ PALAVRAS_CHAVE_DE_BUSCA = [
 QUANTIDADE_DE_POSTS_POR_EXECUCAO = 3
 # Quantas páginas de resultados buscar por palavra-chave para criar a lista de candidatos
 PAGINAS_A_VERIFICAR_POR_KEYWORD = 3 
+
+# --- CONFIGURAÇÃO DA IA ---
+genai.configure(api_key=GEMINI_API_KEY)
+generation_config = {"temperature": 0.7, "top_p": 1, "top_k": 1, "max_output_tokens": 2048}
+model = genai.GenerativeModel('gemini-pro', generation_config=generation_config)
 
 # --- FUNÇÕES AUXILIARES (sem alteração) ---
 def carregar_historico():
@@ -80,11 +87,29 @@ def calcular_pontuacao(produto):
 
     return pontuacao
 
-def coletar_ofertas_candidatas(palavras_chave, paginas_a_verificar, historico):
-    """
-    Busca em todas as keywords e páginas e retorna uma lista de todos os produtos encontrados.
-    """
-    print("Iniciando FASE 1: Coleta de Ofertas Candidatas...")
+def gerar_texto_com_ia(produto):
+    """Gera um texto de venda persuasivo usando a IA do Gemini."""
+    print(f"    - Gerando texto com IA para '{produto['productName']}'...")
+    try:
+        prompt = (
+            "Você é um especialista em marketing digital e copywriter para um canal de ofertas no Telegram chamado 'Conexão Descontos'. "
+            f"Sua tarefa é criar uma chamada curta, empolgante e persuasiva para o seguinte produto: '{produto['productName']}'.\n"
+            "Regras:\n"
+            "- Use no máximo 3 frases.\n"
+            "- Use emojis que combinem com o produto (🔥, ✨, ⚡️, 🚀, etc.).\n"
+            "- Foque nos benefícios e na sensação de oportunidade única.\n"
+            "- Não mencione o preço ou a loja, apenas o produto.\n"
+            "- O texto deve ser em português do Brasil.\n"
+            "Exemplo: '🚀 Leve sua música para outro nível! Perfeita para qualquer festa, essa caixa de som entrega um som potente e cristalino. Não perca essa chance de garantir a sua!'"
+        )
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"    - Erro ao gerar texto com IA: {e}")
+        return f"✨ Confira esta super oferta! ✨\n\n{produto['productName']}" # Fallback
+
+def coletar_e_pontuar_ofertas(palavras_chave, paginas_a_verificar, historico):
+    print("Iniciando FASE 1: Coleta e Pontuação de Ofertas...")
     ofertas_candidatas = []
     itens_por_pagina = 20
 
@@ -92,8 +117,7 @@ def coletar_ofertas_candidatas(palavras_chave, paginas_a_verificar, historico):
         print(f"  - Coletando da keyword: '{palavra}'...")
         for pagina_atual in range(1, paginas_a_verificar + 1):
             timestamp = int(time.time())
-            
-            # --- CORREÇÃO AQUI: Trocado 'keyword' por 'palavra' ---
+            # A query agora precisa pedir os campos 'sales' e 'priceDiscountRate' para a pontuação
             graphql_query = """query { productOfferV2(keyword: "%s", limit: %d, page: %d) { nodes { itemId productName priceMin priceMax offerLink shopName ratingStar sales priceDiscountRate } } }""" % (palavra, itens_por_pagina, pagina_atual)
             
             body = {"query": graphql_query, "variables": {}}
@@ -106,62 +130,30 @@ def coletar_ofertas_candidatas(palavras_chave, paginas_a_verificar, historico):
             try:
                 response = requests.post(SHOPEE_API_URL, data=payload_str, headers=headers)
                 data = response.json()
+
                 if "errors" in data and data["errors"]:
                     print(f"    Erro Shopee: {data['errors']}")
-                    break # Interrompe a busca para esta keyword se houver erro
+                    break 
                 
+                # A variável 'product_list' é definida AQUI
                 product_list = data.get("data", {}).get("productOfferV2", {}).get("nodes", [])
+                
                 if not product_list:
                     print(f"    Nenhum produto retornado na página {pagina_atual}.")
-                    break # Interrompe a busca para esta keyword se não houver mais produtos
+                    break
                 
+                # E usada AQUI, agora na ordem correta
                 for produto in product_list:
                     if produto.get('itemId') not in historico:
+                        produto['pontuacao'] = calcular_pontuacao(produto) # Calcula a pontuação durante a coleta
                         ofertas_candidatas.append(produto)
 
             except Exception as e:
                 print(f"    Erro na requisição: {e}")
                 break
             
-            time.sleep(2) # Pausa entre as páginas
+            time.sleep(2)
             
-    # Remove duplicatas da lista de candidatos
     ofertas_unicas = list({prod['itemId']: prod for prod in ofertas_candidatas}.values())
     print(f"\nColeta finalizada. {len(ofertas_unicas)} ofertas novas e únicas encontradas.")
     return ofertas_unicas
-
-if __name__ == "__main__":
-    print("🤖 Robô Curador Iniciado (v13) 🤖")
-    
-    # FASE 1: Coleta
-    historico_atual = carregar_historico()
-    candidatos = coletar_ofertas_candidatas(PALAVRAS_CHAVE_DE_BUSCA, PAGINAS_A_VERIFICAR_POR_KEYWORD, historico_atual)
-
-    if not candidatos:
-        print("Nenhuma nova oferta encontrada para análise. Ciclo finalizado.")
-    else:
-        # FASE 2: Análise e Pontuação
-        print("\nIniciando FASE 2: Análise e Pontuação das Ofertas...")
-        for produto in candidatos:
-            produto['pontuacao'] = calcular_pontuacao(produto)
-        
-        # Ordena os candidatos pela maior pontuação
-        candidatos_ordenados = sorted(candidatos, key=lambda p: p['pontuacao'], reverse=True)
-        print(f"Análise finalizada. Melhor oferta: '{candidatos_ordenados[0]['productName']}' com score {candidatos_ordenados[0]['pontuacao']:.2f}")
-
-        # FASE 3: Publicação Seletiva
-        print(f"\nIniciando FASE 3: Publicação das {QUANTIDADE_DE_POSTS_POR_EXECUCAO} Melhores Ofertas...")
-        for i, melhor_produto in enumerate(candidatos_ordenados[:QUANTIDADE_DE_POSTS_POR_EXECUCAO]):
-            print(f"  - Postando oferta Top {i+1}...")
-            mensagem = (
-                f"<b>🏆 OFERTA COM ALTA PONTUAÇÃO 🏆</b>\n\n"
-                f"<b>Produto:</b> {melhor_produto.get('productName')}\n"
-                f"<b>Loja:</b> {melhor_produto.get('shopName')}\n"
-                f"<b>Preço:</b> R$ {melhor_produto.get('priceMin')}\n"
-                f"<b>Nota do Robô:</b> {melhor_produto.get('pontuacao'):.2f} / 100\n\n"
-                f"<a href='{melhor_produto.get('offerLink')}'><b>🛒 Ver a Melhor Oferta</b></a>"
-            )
-            if enviar_mensagem_telegram(mensagem):
-                salvar_no_historico(melhor_produto.get('itemId'))
-    
-    print("\n✅ Ciclo do Robô Curador finalizado.")
