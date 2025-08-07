@@ -28,7 +28,7 @@ SHOPEE_API_URL = "https://open-api.affiliate.shopee.com.br/graphql"
 try:
     print("Configurando a IA do Gemini...")
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     print("IA configurada com sucesso.")
 except Exception as e:
     print(f"ERRO CRÍTICO AO CONFIGURAR A IA: {e}")
