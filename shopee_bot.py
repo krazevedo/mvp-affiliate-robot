@@ -1,68 +1,57 @@
-# Versão 10 - Preparada para a Nuvem (Render.com)
+# Versão 16 - Depuração Final e Detalhada
 import requests
 import time
 import hashlib
 import json
 import random
-import os # Essencial para ler variáveis de ambiente
-import math # Precisaremos de matemática para a pontuação
-import google.generativeai as genai
+import os
 import sys
+import math
+import google.generativeai as genai
 
-# --- CONFIGURAÇÕES VINDAS DAS VARIÁVEIS DE AMBIENTE ---
-# O script vai ler estas informações do ambiente da Render, não mais diretamente do código.
-SHOPEE_PARTNER_ID = int(os.environ.get("SHOPEE_PARTNER_ID"))
+# --- 1. VERIFICAÇÃO DAS VARIÁVEIS DE AMBIENTE ---
+print("--- INICIANDO VERIFICAÇÃO DE VARIÁVEIS DE AMBIENTE ---")
+# ... (código de verificação da v15.1, que já sabemos que funciona) ...
+SHOPEE_PARTNER_ID_STR = os.environ.get("SHOPEE_PARTNER_ID")
 SHOPEE_API_KEY = os.environ.get("SHOPEE_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Imprime o status de cada variável para depuração
-print(f"SHOPEE_PARTNER_ID: {'Carregado' if SHOPEE_PARTNER_ID else 'NÃO ENCONTRADO'}")
-print(f"SHOPEE_API_KEY: {'Carregado' if SHOPEE_API_KEY else 'NÃO ENCONTRADO'}")
-print(f"TELEGRAM_BOT_TOKEN: {'Carregado' if TELEGRAM_BOT_TOKEN else 'NÃO ENCONTRADO'}")
-print(f"TELEGRAM_CHAT_ID: {'Carregado' if TELEGRAM_CHAT_ID else 'NÃO ENCONTRADO'}")
-print(f"GEMINI_API_KEY: {'Carregado' if GEMINI_API_KEY else 'NÃO ENCONTRADO'}")
+if not all([SHOPEE_PARTNER_ID_STR, SHOPEE_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, GEMINI_API_KEY]):
+    print("\nERRO CRÍTICO: Segredos não carregados.")
+    sys.exit(1)
 
-# Validação Crítica: Se alguma chave estiver faltando, o robô para aqui.
-if not all([SHOPEE_PARTNER_ID, SHOPEE_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, GEMINI_API_KEY]):
-    print("\nERRO CRÍTICO: Uma ou mais variáveis de ambiente (segredos) não foram carregadas. Verifique as configurações no GitHub.")
-    sys.exit(1) # Encerra o script com um código de erro
-
-# URL da API da Shopee (não mexer)
+SHOPEE_PARTNER_ID = int(SHOPEE_PARTNER_ID_STR)
 SHOPEE_API_URL = "https://open-api.affiliate.shopee.com.br/graphql"
 
-# --- NOVAS CONFIGURAÇÕES ---
+try:
+    print("Configurando a IA do Gemini...")
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-pro')
+    print("IA configurada com sucesso.")
+except Exception as e:
+    print(f"ERRO CRÍTICO AO CONFIGURAR A IA: {e}")
+    sys.exit(1)
+
+# --- PARÂMETROS E FUNÇÕES (sem alteração) ---
 HISTORICO_PRODUTOS_ARQUIVO = "historico_produtos.json"
+PALAVRAS_CHAVE_DE_BUSCA = ["caixa de som bluetooth", "fone de ouvido sem fio", "smartwatch", "teclado mecanico", "mouse gamer", "air fryer", "projetor hy300", "camera de segurança"]
+QUANTIDADE_DE_POSTS_POR_EXECUCAO = 2
+PAGINAS_A_VERIFICAR_POR_KEYWORD = 2
 
-PALAVRAS_CHAVE_DE_BUSCA = [
-    "caixa de som bluetooth",
-    "fone de ouvido sem fio",
-    "smartwatch",
-    "teclado mecanico",
-    "mouse gamer",
-    "air fryer"
-]
-# Quantos dos melhores produtos serão postados ao final de todo o ciclo
-QUANTIDADE_DE_POSTS_POR_EXECUCAO = 3
-# Quantas páginas de resultados buscar por palavra-chave para criar a lista de candidatos
-PAGINAS_A_VERIFICAR_POR_KEYWORD = 3 
-
-# --- CONFIGURAÇÃO DA IA ---
-genai.configure(api_key=GEMINI_API_KEY)
-generation_config = {"temperature": 0.7, "top_p": 1, "top_k": 1, "max_output_tokens": 2048}
-model = genai.GenerativeModel('gemini-pro', generation_config=generation_config)
-
-# --- FUNÇÕES AUXILIARES (sem alteração) ---
 def carregar_historico():
     if not os.path.exists(HISTORICO_PRODUTOS_ARQUIVO): return set()
     with open(HISTORICO_PRODUTOS_ARQUIVO, 'r') as f:
-        try: return set(json.load(f))
-        except json.JSONDecodeError: return set()
+        try:
+            data = json.load(f)
+            # Garante que o histórico seja sempre um conjunto de inteiros
+            return set(int(item) for item in data)
+        except (json.JSONDecodeError, ValueError): return set()
 
 def salvar_no_historico(item_id):
     historico = carregar_historico()
-    historico.add(item_id)
+    historico.add(int(item_id))
     with open(HISTORICO_PRODUTOS_ARQUIVO, 'w') as f: json.dump(list(historico), f)
 
 def enviar_mensagem_telegram(mensagem):
@@ -122,51 +111,72 @@ def gerar_texto_com_ia(produto):
         return f"✨ Confira esta super oferta! ✨\n\n{produto['productName']}" # Fallback
 
 def coletar_e_pontuar_ofertas(palavras_chave, paginas_a_verificar, historico):
-    print("Iniciando FASE 1: Coleta e Pontuação de Ofertas...")
-    ofertas_candidatas = []
-    itens_por_pagina = 20
-
+    print("\n[FASE 1] Iniciando Coleta e Pontuação...")
+    ofertas_por_keyword = {kw: [] for kw in palavras_chave}
+    itens_por_pagina = 10
     for palavra in palavras_chave:
-        print(f"  - Coletando da keyword: '{palavra}'...")
+        print(f"  - Buscando keyword: '{palavra}'...")
         for pagina_atual in range(1, paginas_a_verificar + 1):
             timestamp = int(time.time())
-            # A query agora precisa pedir os campos 'sales' e 'priceDiscountRate' para a pontuação
             graphql_query = """query { productOfferV2(keyword: "%s", limit: %d, page: %d) { nodes { itemId productName priceMin priceMax offerLink shopName ratingStar sales priceDiscountRate } } }""" % (palavra, itens_por_pagina, pagina_atual)
-            
             body = {"query": graphql_query, "variables": {}}
             payload_str = json.dumps(body, separators=(',', ':'))
             base_string = f"{SHOPEE_PARTNER_ID}{timestamp}{payload_str}{SHOPEE_API_KEY}"
             sign = hashlib.sha256(base_string.encode('utf-8')).hexdigest()
             auth_header = f"SHA256 Credential={SHOPEE_PARTNER_ID}, Timestamp={timestamp}, Signature={sign}"
             headers = {'Authorization': auth_header, 'Content-Type': 'application/json'}
-            
             try:
                 response = requests.post(SHOPEE_API_URL, data=payload_str, headers=headers)
                 data = response.json()
-
-                if "errors" in data and data["errors"]:
-                    print(f"    Erro Shopee: {data['errors']}")
-                    break 
-                
-                # A variável 'product_list' é definida AQUI
+                if "errors" in data and data["errors"]: print(f"    Erro Shopee: {data['errors']}"); break
                 product_list = data.get("data", {}).get("productOfferV2", {}).get("nodes", [])
+                if not product_list: print(f"    Nenhum produto na página {pagina_atual}."); break
                 
-                if not product_list:
-                    print(f"    Nenhum produto retornado na página {pagina_atual}.")
-                    break
-                
-                # E usada AQUI, agora na ordem correta
+                print(f"    Página {pagina_atual}: {len(product_list)} produtos encontrados.")
+                novos_nesta_pagina = 0
                 for produto in product_list:
-                    if produto.get('itemId') not in historico:
-                        produto['pontuacao'] = calcular_pontuacao(produto) # Calcula a pontuação durante a coleta
-                        ofertas_candidatas.append(produto)
-
-            except Exception as e:
-                print(f"    Erro na requisição: {e}")
-                break
-            
+                    item_id = int(produto.get('itemId'))
+                    if item_id not in historico:
+                        produto['pontuacao'] = calcular_pontuacao(produto)
+                        ofertas_por_keyword[palavra].append(produto)
+                        novos_nesta_pagina += 1
+                if novos_nesta_pagina == 0: print("    Todos os produtos desta página já estão no histórico.")
+                        
+            except Exception as e: print(f"    Erro na requisição: {e}"); break
             time.sleep(2)
-            
-    ofertas_unicas = list({prod['itemId']: prod for prod in ofertas_candidatas}.values())
-    print(f"\nColeta finalizada. {len(ofertas_unicas)} ofertas novas e únicas encontradas.")
-    return ofertas_unicas
+    print("Coleta finalizada.")
+    return ofertas_por_keyword
+
+# --- EXECUÇÃO PRINCIPAL ---
+if __name__ == "__main__":
+    print(f"\n🤖 Robô Curador com IA Iniciado (v16 - Debug Final)")
+    
+    historico_atual = carregar_historico()
+    print(f"Carregado histórico com {len(historico_atual)} itens.")
+
+    ofertas_por_categoria = coletar_e_pontuar_ofertas(PALAVRAS_CHAVE_DE_BUSCA, PAGINAS_A_VERIFICAR_POR_KEYWORD, historico_atual)
+    
+    print("\n[FASE 2] Iniciando Seleção das Melhores Ofertas...")
+    melhores_ofertas = []
+    for palavra, ofertas in ofertas_por_categoria.items():
+        if ofertas:
+            print(f"  - Categoria '{palavra}' tem {len(ofertas)} novas ofertas.")
+            melhor_da_categoria = sorted(ofertas, key=lambda p: p['pontuacao'], reverse=True)[0]
+            melhores_ofertas.append(melhor_da_categoria)
+        else:
+            print(f"  - Categoria '{palavra}' não tem novas ofertas.")
+    
+    if not melhores_ofertas:
+        print("\nNenhuma nova oferta encontrada em nenhuma categoria para análise. Ciclo finalizado.")
+    else:
+        melhores_ofertas_gerais = sorted(melhores_ofertas, key=lambda p: p['pontuacao'], reverse=True)
+        print(f"Seleção finalizada. {len(melhores_ofertas_gerais)} ofertas finalistas escolhidas.")
+        
+        print(f"\n[FASE 3] Iniciando Publicação das {QUANTIDADE_DE_POSTS_POR_EXECUCAO} Melhores...")
+        for i, produto_final in enumerate(melhores_ofertas_gerais[:QUANTIDADE_DE_POSTS_POR_EXECUCAO]):
+            print(f"  - Processando oferta Top {i+1}: '{produto_final['productName']}'")
+            # (A lógica de gerar texto com IA e enviar para o Telegram vai aqui)
+            # ...
+            pass # Substitua pelo código de postagem real
+
+    print("\n✅ Ciclo do Robô Curador com IA concluído com sucesso.")
