@@ -28,7 +28,13 @@ jobs:
 
       # 3. Instala as dependências do nosso script
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          echo "--- Verificando o conteúdo do requirements.txt que o robô está lendo ---"
+          cat requirements.txt
+          echo "--- Fim do arquivo. Iniciando a instalação ---"
+          pip install --no-cache-dir -r requirements.txt
+          echo "--- Verificando os pacotes que foram instalados ---"
+          pip list
 
       # 4. Executa o nosso robô!
       - name: Run Shopee Bot
