@@ -149,13 +149,15 @@ def coletar_e_pontuar_ofertas(palavras_chave, paginas_a_verificar, historico):
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
-    print(f"\n🤖 Robô Curador com IA Iniciado (v16 - Debug Final)")
+    print(f"\n🤖 Robô Curador com IA Iniciado (v16 - Operacional)")
     
     historico_atual = carregar_historico()
     print(f"Carregado histórico com {len(historico_atual)} itens.")
 
+    # FASE 1: Coleta e Pontuação (já está funcionando)
     ofertas_por_categoria = coletar_e_pontuar_ofertas(PALAVRAS_CHAVE_DE_BUSCA, PAGINAS_A_VERIFICAR_POR_KEYWORD, historico_atual)
     
+    # FASE 2: Seleção das Melhores Ofertas (já está funcionando)
     print("\n[FASE 2] Iniciando Seleção das Melhores Ofertas...")
     melhores_ofertas = []
     for palavra, ofertas in ofertas_por_categoria.items():
@@ -172,11 +174,25 @@ if __name__ == "__main__":
         melhores_ofertas_gerais = sorted(melhores_ofertas, key=lambda p: p['pontuacao'], reverse=True)
         print(f"Seleção finalizada. {len(melhores_ofertas_gerais)} ofertas finalistas escolhidas.")
         
+        # --- CORREÇÃO AQUI: A LÓGICA DE POSTAGEM FOI ADICIONADA ---
         print(f"\n[FASE 3] Iniciando Publicação das {QUANTIDADE_DE_POSTS_POR_EXECUCAO} Melhores...")
         for i, produto_final in enumerate(melhores_ofertas_gerais[:QUANTIDADE_DE_POSTS_POR_EXECUCAO]):
-            print(f"  - Processando oferta Top {i+1}: '{produto_final['productName']}'")
-            # (A lógica de gerar texto com IA e enviar para o Telegram vai aqui)
-            # ...
-            pass # Substitua pelo código de postagem real
+            print(f"  - Processando oferta Top {i+1}: '{produto_final.get('productName')}'")
+            
+            # Chama a IA para gerar o texto
+            texto_ia = gerar_texto_com_ia(produto_final)
+            
+            # Formata a mensagem final
+            mensagem_final = (
+                f"{texto_ia}\n\n"
+                f"<b>💰 Preço:</b> A partir de R$ {produto_final.get('priceMin')}\n"
+                f"<b>🏪 Loja:</b> {produto_final.get('shopName')}\n"
+                f"<b>⭐ Avaliação:</b> {produto_final.get('ratingStar')} estrelas\n\n"
+                f"<a href='{produto_final.get('offerLink')}'><b>🛒 Ver Oferta e Comprar</b></a>"
+            )
+            
+            # Envia para o Telegram e, se tiver sucesso, salva no histórico
+            if enviar_mensagem_telegram(mensagem_final):
+                salvar_no_historico(produto_final.get('itemId'))
 
     print("\n✅ Ciclo do Robô Curador com IA concluído com sucesso.")
