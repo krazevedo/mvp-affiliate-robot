@@ -6,7 +6,7 @@ on:
   schedule:
     # Roda a cada 2 horas (no minuto 0). Você pode ajustar o cron.
     # Use https://crontab.guru/ para criar sua própria agenda.
-    - cron: '0 * * * *'
+    - cron: '0 */3 * * *'
   # Permite também que a gente rode manualmente pela interface do GitHub
   workflow_dispatch:
 
