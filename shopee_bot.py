@@ -19,6 +19,15 @@ SHOPEE_API_URL = "https://open-api.affiliate.shopee.com.br/graphql"
 # --- NOVAS CONFIGURAÇÕES ---
 HISTORICO_PRODUTOS_ARQUIVO = "historico_produtos.json"
 
+PALAVRAS_CHAVE_DE_BUSCA = [
+    "caixa de som bluetooth",
+    "fone de ouvido sem fio",
+    "smartwatch",
+    "teclado mecanico",
+    "mouse gamer",
+    "air fryer"
+]
+
 # Lista de templates para as mensagens. Sinta-se à vontade para adicionar mais!
 TEMPLATES_MENSAGENS = [
     (
@@ -142,6 +151,87 @@ def buscar_e_postar_oferta_shopee(keyword, limit=5):
     except Exception as e:
         print(f"Ocorreu um erro inesperado: {e}")
 
+def buscar_e_postar_novas_ofertas(keyword, novas_ofertas_desejadas=1):
+    """
+    Função principal com lógica de paginação para encontrar ofertas inéditas.
+    """
+    historico = carregar_historico()
+    print(f"Histórico atual contém {len(historico)} produtos.")
+
+    # --- NOVA LÓGICA DE PAGINAÇÃO ---
+    pagina_atual = 1
+    ofertas_postadas_nesta_busca = 0
+    MAX_PAGINAS_A_VERIFICAR = 5 # Limite de segurança
+    LIMITE_DE_ITENS_POR_PAGINA = 10 # Quantos itens pedir por página para a API
+
+    while ofertas_postadas_nesta_busca < novas_ofertas_desejadas and pagina_atual <= MAX_PAGINAS_A_VERIFICAR:
+        print(f"\nVerificando página {pagina_atual} para a keyword '{keyword}'...")
+        
+        timestamp = int(time.time())
+        # A query agora inclui o parâmetro 'page'
+        graphql_query = """query { productOfferV2(keyword: "%s", limit: %d, page: %d) { nodes { itemId productName priceMin priceMax offerLink shopName ratingStar imageUrl } } }""" % (keyword, LIMITE_DE_ITENS_POR_PAGINA, pagina_atual)
+        
+        # (O restante da lógica de autenticação e chamada da API permanece o mesmo)
+        body = {"query": graphql_query, "variables": {}}
+        payload_str = json.dumps(body, separators=(',', ':'))
+        base_string = f"{SHOPEE_PARTNER_ID}{timestamp}{payload_str}{SHOPEE_API_KEY}"
+        sign = hashlib.sha256(base_string.encode('utf-8')).hexdigest()
+        auth_header = f"SHA256 Credential={SHOPEE_PARTNER_ID}, Timestamp={timestamp}, Signature={sign}"
+        headers = {'Authorization': auth_header, 'Content-Type': 'application/json'}
+
+        try:
+            response = requests.post(SHOPEE_API_URL, data=payload_str, headers=headers)
+            data = response.json()
+            if "errors" in data and data["errors"]: print(f"Erro Shopee: {data['errors']}"); break
+
+            product_list = data.get("data", {}).get("productOfferV2", {}).get("nodes", [])
+            if not product_list:
+                print("Nenhum produto retornado nesta página. Encerrando busca para esta keyword.")
+                break
+            
+            produtos_novos_na_pagina = 0
+            for produto in product_list:
+                item_id = produto.get('itemId')
+                if item_id in historico:
+                    continue # Pula para o próximo produto da lista se já estiver no histórico
+
+                # Se chegamos aqui, o produto é novo!
+                produtos_novos_na_pagina += 1
+                template_escolhido = random.choice(TEMPLATES_MENSAGENS)
+                mensagem_formatada = template_escolhido.format(**produto) # Truque para preencher o template
+                
+                if enviar_mensagem_telegram(mensagem_formatada):
+                    salvar_no_historico(item_id)
+                    ofertas_postadas_nesta_busca += 1
+                    print(f"✅ Nova oferta '{produto.get('productName')}' postada e salva no histórico.")
+                    if ofertas_postadas_nesta_busca >= novas_ofertas_desejadas:
+                        break # Sai do loop for se já atingimos a meta
+            
+            if produtos_novos_na_pagina == 0:
+                print("Todos os produtos desta página já estão no histórico.")
+
+            pagina_atual += 1 # Prepara para buscar na próxima página no próximo loop
+
+        except Exception as e:
+            print(f"Ocorreu um erro inesperado na busca: {e}")
+            break # Interrompe a busca para esta keyword em caso de erro
+
+    return ofertas_postadas_nesta_busca
+
+
 if __name__ == "__main__":
-    palavra_chave_para_buscar = "caixa de som bluetooth"
-    buscar_e_postar_oferta_shopee(palavra_chave_para_buscar, limit=3) # Aumentamos o limite para ter mais chance de achar algo novo
+    NOVAS_OFERTAS_POR_PALAVRA = 1 # Quantas ofertas novas queremos postar para cada keyword
+    
+    print("🤖 Robô de Ofertas Iniciado - v12 com Paginação Inteligente 🤖")
+    
+    for palavra in PALAVRAS_CHAVE_DE_BUSCA:
+        print("\n" + "="*50)
+        print(f"🔎 Buscando {NOVAS_OFERTAS_POR_PALAVRA} nova(s) oferta(s) para: '{palavra}'")
+        print("="*50)
+        
+        buscar_e_postar_novas_ofertas(palavra, novas_ofertas_desejadas=NOVAS_OFERTAS_POR_PALAVRA)
+        
+        print("\n🕒 Pausa de 5 segundos antes da próxima busca...")
+        time.sleep(5)
+        
+    print("\n✅ Ciclo de busca finalizado.")
