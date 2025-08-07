@@ -81,6 +81,9 @@ def calcular_pontuacao(produto):
     return pontuacao
 
 def coletar_ofertas_candidatas(palavras_chave, paginas_a_verificar, historico):
+    """
+    Busca em todas as keywords e páginas e retorna uma lista de todos os produtos encontrados.
+    """
     print("Iniciando FASE 1: Coleta de Ofertas Candidatas...")
     ofertas_candidatas = []
     itens_por_pagina = 20
@@ -89,7 +92,10 @@ def coletar_ofertas_candidatas(palavras_chave, paginas_a_verificar, historico):
         print(f"  - Coletando da keyword: '{palavra}'...")
         for pagina_atual in range(1, paginas_a_verificar + 1):
             timestamp = int(time.time())
-            graphql_query = """query { productOfferV2(keyword: "%s", limit: %d, page: %d) { nodes { itemId productName priceMin priceMax offerLink shopName ratingStar sales priceDiscountRate } } }""" % (keyword, itens_por_pagina, pagina_atual)
+            
+            # --- CORREÇÃO AQUI: Trocado 'keyword' por 'palavra' ---
+            graphql_query = """query { productOfferV2(keyword: "%s", limit: %d, page: %d) { nodes { itemId productName priceMin priceMax offerLink shopName ratingStar sales priceDiscountRate } } }""" % (palavra, itens_por_pagina, pagina_atual)
+            
             body = {"query": graphql_query, "variables": {}}
             payload_str = json.dumps(body, separators=(',', ':'))
             base_string = f"{SHOPEE_PARTNER_ID}{timestamp}{payload_str}{SHOPEE_API_KEY}"
@@ -100,18 +106,28 @@ def coletar_ofertas_candidatas(palavras_chave, paginas_a_verificar, historico):
             try:
                 response = requests.post(SHOPEE_API_URL, data=payload_str, headers=headers)
                 data = response.json()
-                if "errors" in data and data["errors"]: print(f"    Erro Shopee: {data['errors']}"); break
+                if "errors" in data and data["errors"]:
+                    print(f"    Erro Shopee: {data['errors']}")
+                    break # Interrompe a busca para esta keyword se houver erro
+                
                 product_list = data.get("data", {}).get("productOfferV2", {}).get("nodes", [])
-                if not product_list: break
+                if not product_list:
+                    print(f"    Nenhum produto retornado na página {pagina_atual}.")
+                    break # Interrompe a busca para esta keyword se não houver mais produtos
                 
                 for produto in product_list:
                     if produto.get('itemId') not in historico:
                         ofertas_candidatas.append(produto)
-            except Exception as e: print(f"    Erro na requisição: {e}"); break
-            time.sleep(2)
+
+            except Exception as e:
+                print(f"    Erro na requisição: {e}")
+                break
             
+            time.sleep(2) # Pausa entre as páginas
+            
+    # Remove duplicatas da lista de candidatos
     ofertas_unicas = list({prod['itemId']: prod for prod in ofertas_candidatas}.values())
-    print(f"Coleta finalizada. {len(ofertas_unicas)} ofertas novas encontradas.")
+    print(f"\nColeta finalizada. {len(ofertas_unicas)} ofertas novas e únicas encontradas.")
     return ofertas_unicas
 
 if __name__ == "__main__":
