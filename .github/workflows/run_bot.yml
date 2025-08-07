@@ -44,6 +44,7 @@ jobs:
           SHOPEE_API_KEY: ${{ secrets.SHOPEE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
       # 5. Salva o arquivo de histórico de volta no repositório
       - name: Commit and push history file
