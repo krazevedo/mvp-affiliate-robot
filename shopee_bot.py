@@ -1,9 +1,10 @@
-# Versão 18 - O Robô Vigilante de Preços (Completo e Final)
+# Versão 18.2 - O Robô Vigilante de Preços (Completo e Corrigido)
 import requests, time, hashlib, json, random, os, sys, math
 import google.generativeai as genai
 from thefuzz import fuzz
 
-# --- CONFIGURAÇÕES GERAIS E SEGREDOS ---
+# --- 1. CONFIGURAÇÕES GERAIS E SEGREDOS ---
+print("--- INICIANDO VERIFICAÇÃO DE VARIÁVEIS DE AMBIENTE ---")
 SHOPEE_PARTNER_ID_STR = os.environ.get("SHOPEE_PARTNER_ID")
 SHOPEE_API_KEY = os.environ.get("SHOPEE_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -26,12 +27,13 @@ except Exception as e:
     print(f"ERRO CRÍTICO AO CONFIGURAR A IA: {e}")
     sys.exit(1)
 
-# --- PARÂMETROS DE CURADORIA E VIGILÂNCIA ---
+# --- 2. PARÂMETROS DE CURADORIA E VIGILÂNCIA ---
 HISTORICO_PRODUTOS_ARQUIVO = "historico_produtos.json"
 QUANTIDADE_DE_POSTS_POR_EXECUCAO = 3
 PAGINAS_A_VERIFICAR_POR_KEYWORD = 3
 LIMIAR_DE_DESCONTO_REPOSTAGEM = 0.15  # 15%
 COOLDOWN_REPOSTAGEM_DIAS = 7
+LIMIAR_SIMILARIDADE_DUPLICATA = 85 # 85%
 
 TEMPLATES_ALERTA_PRECO = [
     ("🚨 **BAIXOU O PREÇO!** 🚨\n\n"
@@ -41,7 +43,7 @@ TEMPLATES_ALERTA_PRECO = [
      "<a href='{offerLink}'><b>🏃‍♂️ Corre pra garantir antes que o preço suba!</b></a>")
 ]
 
-# --- FUNÇÕES AUXILIARES ---
+# --- 3. FUNÇÕES AUXILIARES ---
 def carregar_keywords(caminho_arquivo="keywords.txt"):
     try:
         with open(caminho_arquivo, 'r', encoding='utf-8') as f:
@@ -71,24 +73,55 @@ def salvar_no_historico(produto, historico):
         json.dump(historico, f, ensure_ascii=False, indent=2)
 
 def enviar_mensagem_telegram(mensagem):
-    # (Cole aqui a função completa da v16)
-    pass 
+    print("Enviando mensagem para o Telegram...")
+    telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': mensagem, 'parse_mode': 'HTML', 'disable_web_page_preview': False}
+    try:
+        response = requests.post(telegram_api_url, json=payload)
+        response_json = response.json()
+        if response_json.get("ok"):
+            print("Mensagem enviada com sucesso!")
+            return True
+        else:
+            print(f"--- ERRO TELEGRAM ---: {response_json.get('description')}")
+            return False
+    except requests.exceptions.RequestException as e:
+        print(f"Erro de conexão com a API do Telegram: {e}")
+        return False
 
 def calcular_pontuacao(produto):
-    # (Cole aqui a função completa da v16)
-    pass
+    try:
+        pontuacao = 0.0
+        if not produto.get('ratingStar') or float(produto.get('ratingStar', "0")) < 4.0: return 0.0
+        
+        desconto = produto.get('priceDiscountRate')
+        if desconto is not None: pontuacao += float(desconto) * 1.5
+            
+        avaliacao = float(produto.get('ratingStar', "0"))
+        pontuacao += avaliacao * 1.0
+            
+        vendas = produto.get('sales')
+        if vendas is not None and vendas > 0: pontuacao += math.log10(vendas) * 0.8
+        return pontuacao
+    except (ValueError, TypeError, Exception): return 0.0
 
 def gerar_texto_com_ia(produto):
-    # (Cole aqui a função completa da v16)
-    pass
+    print(f"    - Gerando texto com IA para '{produto.get('productName')}'...")
+    try:
+        prompt = (f"Você é um especialista em marketing para um canal de ofertas. Crie uma chamada curta e empolgante (máximo 3 frases, use emojis) para o produto: '{produto.get('productName')}'. Foque nos benefícios.")
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"    - Erro ao gerar texto com IA: {e}")
+        return f"✨ Confira esta super oferta! ✨\n\n{produto.get('productName')}"
 
-def verificar_link_ativo(url):
-    # (Cole aqui a função completa da v17)
-    pass
-
-def eh_duplicata(novo_produto, historico):
-    # (Cole aqui a função completa da v17)
-    pass
+def eh_duplicata_por_nome(novo_produto, historico):
+    for item_id, dados_antigos in historico.items():
+        similaridade = fuzz.token_sort_ratio(novo_produto.get('productName'), dados_antigos.get('productName'))
+        if similaridade > LIMIAR_SIMILARIDADE_DUPLICATA:
+            print(f"    -> Duplicata por nome! Similaridade de {similaridade}% com '{dados_antigos.get('productName')}'")
+            return True
+    return False
 
 def coletar_ofertas_candidatas(palavras_chave, paginas_a_verificar):
     print("\n[FASE 1] Iniciando Coleta de Ofertas...")
