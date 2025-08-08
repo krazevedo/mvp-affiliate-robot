@@ -126,4 +126,80 @@ def coletar_ofertas_candidatas(palavras_chave, paginas_a_verificar):
     return ofertas_unicas
 
 # --- EXECUÇÃO PRINCIPAL REESTRUTURADA ---
-# (Cole aqui o bloco if __name__ == "__main__" completo da v18)
+if __name__ == "__main__":
+    print(f"\n🤖 Robô Vigilante de Preços Iniciado (v18)")
+    
+    historico = carregar_historico()
+    print(f"Carregado histórico com {len(historico)} itens para vigilância.")
+
+    # FASE 1: Coleta de todos os produtos
+    candidatos = coletar_ofertas_candidatas(PALAVRAS_CHAVE_DE_BUSCA, PAGINAS_A_VERIFICAR_POR_KEYWORD)
+
+    # FASE 2: Análise e Separação
+    print("\n[FASE 2] Analisando ofertas: Novidades vs. Queda de Preço...")
+    novas_ofertas_candidatas = []
+    alertas_de_preco = []
+    cooldown_segundos = COOLDOWN_REPOSTAGEM_DIAS * 24 * 60 * 60
+
+    for produto in candidatos:
+        item_id_str = str(produto.get('itemId'))
+        
+        if item_id_str in historico:
+            preco_antigo = historico[item_id_str].get('priceMin', float('inf'))
+            preco_novo_str = produto.get('priceMin')
+            if not preco_novo_str: continue
+            preco_novo = float(preco_novo_str)
+            ultimo_post = historico[item_id_str].get('lastPostedTimestamp', 0)
+
+            preco_caiu = preco_novo < (preco_antigo * (1 - LIMIAR_DE_DESCONTO_REPOSTAGEM))
+            passou_cooldown = (time.time() - ultimo_post) > cooldown_segundos
+
+            if preco_caiu and passou_cooldown:
+                produto['preco_antigo'] = preco_antigo
+                desconto_percentual = round((1 - (preco_novo / preco_antigo)) * 100)
+                produto['desconto_percentual'] = desconto_percentual
+                alertas_de_preco.append(produto)
+                print(f"  -> ALERTA DE PREÇO! '{produto['productName']}' de R${preco_antigo} por R${preco_novo}")
+        else:
+            # Produto 100% novo
+            novas_ofertas_candidatas.append(produto)
+
+    # FASE 3: Pontuação e Seleção
+    print(f"\n[FASE 3] Pontuação e Seleção: {len(alertas_de_preco)} alertas e {len(novas_ofertas_candidatas)} novidades.")
+    
+    # Pontua apenas as novas ofertas
+    for produto in novas_ofertas_candidatas:
+        produto['pontuacao'] = calcular_pontuacao(produto)
+    
+    novas_ofertas_ordenadas = sorted(novas_ofertas_candidatas, key=lambda p: p.get('pontuacao', 0), reverse=True)
+    
+    lista_final_para_postar = alertas_de_preco + novas_ofertas_ordenadas
+    
+    # FASE 4: Publicação Prioritária
+    if not lista_final_para_postar:
+        print("Nenhuma oferta relevante para postar neste ciclo.")
+    else:
+        print(f"\n[FASE 4] Publicando as {QUANTIDADE_DE_POSTS_POR_EXECUCAO} melhores ofertas...")
+        postagens_feitas = 0
+        for produto in lista_final_para_postar:
+            if postagens_feitas >= QUANTIDADE_DE_POSTS_POR_EXECUCAO:
+                break
+            
+            if 'preco_antigo' in produto: # É um alerta de preço
+                template = random.choice(TEMPLATES_ALERTA_PRECO)
+                mensagem = template.format(**produto)
+            else: # É uma novidade
+                texto_ia = gerar_texto_com_ia(produto)
+                mensagem = (
+                    f"{texto_ia}\n\n"
+                    f"<b>💰 Preço:</b> A partir de R$ {produto.get('priceMin')}\n"
+                    f"<b>🏪 Loja:</b> {produto.get('shopName')}\n"
+                    f"<b>⭐ Avaliação:</b> {produto.get('ratingStar')} estrelas\n\n"
+                    f"<a href='{produto.get('offerLink')}'><b>🛒 Ver Oferta e Comprar</b></a>"
+                )
+
+            if enviar_mensagem_telegram(mensagem):
+                salvar_no_historico(produto, historico)
+                postagens_feitas += 1
+    
+    print("\n✅ Ciclo do Robô Vigilante de Preços finalizado.")
