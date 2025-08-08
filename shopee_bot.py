@@ -127,7 +127,7 @@ def coletar_ofertas_candidatas(palavras_chave, paginas_a_verificar):
 
 # --- EXECUÇÃO PRINCIPAL REESTRUTURADA ---
 if __name__ == "__main__":
-    print(f"\n🤖 Robô Vigilante de Preços Iniciado (v18)")
+    print(f"\n🤖 Robô Vigilante de Preços Iniciado (v18.1)")
     
     historico = carregar_historico()
     print(f"Carregado histórico com {len(historico)} itens para vigilância.")
@@ -145,6 +145,7 @@ if __name__ == "__main__":
         item_id_str = str(produto.get('itemId'))
         
         if item_id_str in historico:
+            # Produto conhecido, verificar queda de preço
             preco_antigo = historico[item_id_str].get('priceMin', float('inf'))
             preco_novo_str = produto.get('priceMin')
             if not preco_novo_str: continue
@@ -159,20 +160,22 @@ if __name__ == "__main__":
                 desconto_percentual = round((1 - (preco_novo / preco_antigo)) * 100)
                 produto['desconto_percentual'] = desconto_percentual
                 alertas_de_preco.append(produto)
-                print(f"  -> ALERTA DE PREÇO! '{produto['productName']}' de R${preco_antigo} por R${preco_novo}")
+                print(f"  -> ALERTA DE PREÇO! '{produto['productName']}' de R${preco_antigo:.2f} por R${preco_novo:.2f}")
         else:
-            # Produto 100% novo
+            # Produto 100% novo, adiciona à lista de candidatos para pontuação
             novas_ofertas_candidatas.append(produto)
 
-    # FASE 3: Pontuação e Seleção
-    print(f"\n[FASE 3] Pontuação e Seleção: {len(alertas_de_preco)} alertas e {len(novas_ofertas_candidatas)} novidades.")
+    # FASE 3: Pontuação e Ordenação das Novidades
+    print(f"\n[FASE 3] Pontuando e Ordenando {len(novas_ofertas_candidatas)} Novidades...")
     
-    # Pontua apenas as novas ofertas
+    # *** CORREÇÃO AQUI: Loop para calcular a pontuação ANTES de ordenar ***
     for produto in novas_ofertas_candidatas:
         produto['pontuacao'] = calcular_pontuacao(produto)
     
+    # Agora sim, ordena a lista que já tem as pontuações calculadas
     novas_ofertas_ordenadas = sorted(novas_ofertas_candidatas, key=lambda p: p.get('pontuacao', 0), reverse=True)
     
+    # Monta a lista final de postagens, com prioridade para os alertas
     lista_final_para_postar = alertas_de_preco + novas_ofertas_ordenadas
     
     # FASE 4: Publicação Prioritária
@@ -185,8 +188,11 @@ if __name__ == "__main__":
             if postagens_feitas >= QUANTIDADE_DE_POSTS_POR_EXECUCAO:
                 break
             
+            # Lógica para escolher o template e postar
             if 'preco_antigo' in produto: # É um alerta de preço
                 template = random.choice(TEMPLATES_ALERTA_PRECO)
+                # Converte os floats para o formato com 2 casas decimais para a mensagem
+                produto['priceMin'] = float(produto.get('priceMin', 0))
                 mensagem = template.format(**produto)
             else: # É uma novidade
                 texto_ia = gerar_texto_com_ia(produto)
