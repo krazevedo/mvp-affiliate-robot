@@ -93,13 +93,11 @@ def enviar_mensagem_telegram(mensagem):
 def analisar_e_pontuar_com_ia(produtos_candidatos):
     """
     Envia uma lista de produtos para a IA para análise, pontuação e geração de texto.
-    Este é o novo "cérebro" do robô.
     """
     print(f"    - Enviando {len(produtos_candidatos)} candidatos para análise da IA...")
     if not produtos_candidatos:
         return []
 
-    # Prepara os dados dos produtos para enviar para a IA
     dados_para_ia = []
     for p in produtos_candidatos:
         dados_para_ia.append({
@@ -110,19 +108,23 @@ def analisar_e_pontuar_com_ia(produtos_candidatos):
             "priceDiscountRate": p.get('priceDiscountRate')
         })
 
+    # --- PROMPT APRIMORADO ---
     prompt = (
-        "Você é um Curador Especialista em E-commerce para um canal de ofertas no Brasil chamado 'Conexão Descontos'. "
-        "Sua tarefa é analisar uma lista de produtos em formato JSON e agir como um filtro de qualidade para selecionar os melhores para postar.\n\n"
-        "Regras da Análise:\n"
-        "1. Para cada produto, calcule uma 'pontuacao' de 0 a 100. Considere a combinação de avaliação (`ratingStar`), popularidade (`sales`), e a taxa de desconto (`priceDiscountRate`). Pense como um humano: um produto com 4.7 estrelas e 5000 vendas é geralmente melhor que um com 5.0 estrelas e apenas 10 vendas. Um desconto alto em um produto mal avaliado (abaixo de 4.0) deve receber nota baixa.\n"
-        "2. Para cada produto, crie um 'texto_de_venda' curto (máximo 3 frases), empolgante e persuasivo, usando emojis. Foque nos benefícios.\n\n"
+        "Você é um copywriter de elite para um canal de ofertas de grande sucesso no Telegram chamado 'Conexão Descontos'. "
+        "Sua tarefa é analisar uma lista de produtos em formato JSON e, para cada um, criar 3 coisas: uma pontuação, uma justificativa, e um texto de venda.\n\n"
+        "**Regras da Pontuação:**\n"
+        "Para a 'pontuacao' (0 a 100), valorize uma combinação de muitas `sales` e um `ratingStar` alto. Um `priceDiscountRate` alto é um bônus importante. Seja rigoroso.\n\n"
+        "**Regras do Texto de Venda:**\n"
+        "1. **Estrutura:** Crie um **Título Chamativo** curto em negrito com 1-2 emojis, seguido por 1-2 frases focadas em benefícios e urgência.\n"
+        "2. **Conteúdo Obrigatório:** O texto DEVE mencionar o **desconto em porcentagem** (ex: 'com X% OFF!') e a **avaliação em estrelas** (ex: 'com X.X estrelas de avaliação!').\n"
+        "3. **Conteúdo Proibido:** **NÃO mencione o número de vendas.**\n"
+        "4. **Tom:** Seja persuasivo e empolgante.\n\n"
         f"Analise os seguintes produtos: {json.dumps(dados_para_ia, ensure_ascii=False)}\n\n"
-        "Sua resposta deve ser **APENAS** um objeto JSON válido. A chave principal deve ser 'analise_de_produtos'. O valor deve ser uma lista de objetos, onde cada objeto representa um produto analisado e contém três chaves: 'itemId' (do produto original), 'pontuacao' (a nota de 0 a 100 que você atribuiu), e 'texto_de_venda' (o texto persuasivo que você criou)."
+        "**Formato da Resposta:** Sua resposta deve ser **APENAS** um objeto JSON válido com a chave 'analise_de_produtos', contendo uma lista. Cada objeto na lista deve ter três chaves: 'itemId', 'pontuacao' e 'texto_de_venda'."
     )
 
     try:
         response = model.generate_content(prompt)
-        # Limpa a resposta para extrair apenas o JSON
         texto_limpo = response.text.strip().replace("```json", "").replace("```", "")
         resultado_ia = json.loads(texto_limpo)
         print("    - Análise da IA recebida com sucesso.")
@@ -170,7 +172,7 @@ def eh_duplicata_por_nome(novo_produto, historico_valores):
     return False
 
 # --- 4. FUNÇÃO DE COLETA HÍBRIDA ---
-def coletar_ofertas_candidatas(palavras_chave, lojas_favoritas, paginas_a_verificar, historico_ids):
+def coletar_ofertas_candidatas(palavras_chave, lojas_favoritas, paginas_a_verificar, historico_ids, historico_valores):
     print("\n[FASE 1] Iniciando Coleta Híbrida de Ofertas...")
     ofertas_candidatas = []
     itens_por_pagina = 15
@@ -193,8 +195,16 @@ def coletar_ofertas_candidatas(palavras_chave, lojas_favoritas, paginas_a_verifi
                 product_list = data.get("data", {}).get("productOfferV2", {}).get("nodes", [])
                 if not product_list: break
                 for produto in product_list:
+                    avaliacao_str = produto.get('ratingStar', "0")
+                    if not avaliacao_str or float(avaliacao_str) < 4.5:
+                        continue # Pula produtos com avaliação baixa
+
                     if int(produto.get('itemId')) in historico_ids or not verificar_link_ativo(produto.get("productLink")):
                         continue
+                    
+                    if eh_duplicata_por_nome(produto, historico_valores):
+                        continue
+
                     ofertas_candidatas.append(produto)
             except Exception as e: print(f"    Erro na requisição: {e}"); break
             time.sleep(2)
@@ -210,7 +220,7 @@ if __name__ == "__main__":
     print(f"Carregado histórico com {len(historico)} itens.")
 
     # FASE 1: Coleta
-    candidatos = coletar_ofertas_candidatas(PALAVRAS_CHAVE_DE_BUSCA, LOJAS_FAVORITAS_IDS, PAGINAS_A_VERIFICAR, historico_ids)
+    candidatos = coletar_ofertas_candidatas(PALAVRAS_CHAVE_DE_BUSCA, LOJAS_FAVORITAS_IDS, PAGINAS_A_VERIFICAR, historico_ids, historico.values())
     
     # FASE 2: Análise, Pontuação e Geração de Texto pela IA
     if not candidatos:
