@@ -1,4 +1,4 @@
-# Versão 1.0 - O Robô Caçador de Lojas (Completo)
+# Versão Final - O Robô Caçador de Lojas (Completo e Corrigido)
 import requests
 import time
 import hashlib
@@ -23,7 +23,8 @@ if not all([SHOPEE_PARTNER_ID_STR, SHOPEE_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_
     sys.exit(1)
 
 SHOPEE_PARTNER_ID = int(SHOPEE_PARTNER_ID_STR)
-SHOPEE_API_URL = "https://open-api.affiliate.shpee.com.br/graphql"
+# CORREÇÃO CRUCIAL: URL estava com erro de digitação ("shpee")
+SHOPEE_API_URL = "https://open-api.affiliate.shopee.com.br/graphql"
 
 try:
     print("Configurando a IA do Gemini...")
@@ -36,11 +37,10 @@ except Exception as e:
 
 # --- 2. PARÂMETROS DO CAÇADOR DE LOJAS ---
 HISTORICO_PRODUTOS_ARQUIVO = "historico_produtos.json"
-# SUA MISSÃO: Substitua esta lista pelos IDs de LOJA que você encontrar!
-SHOP_IDS_PARA_MONITORAR = [369632653, 288420684, 286277644, 1157280425, 1315886500, 349591196, 886950101] # Exemplo de ID da documentação
-QUANTIDADE_DE_POSTS_POR_EXECUCAO = 3 # Quantas das melhores ofertas de todas as lojas serão postadas
+SHOP_IDS_PARA_MONITORAR = [84499012] # Lembre-se de substituir pelos IDs de loja que você pesquisou
+QUANTIDADE_DE_POSTS_POR_EXECUCAO = 2
 
-# --- 3. FUNÇÕES AUXILIARES (Copiadas do robô principal para independência) ---
+# --- 3. FUNÇÕES AUXILIARES COMPLETAS ---
 def carregar_historico():
     if not os.path.exists(HISTORICO_PRODUTOS_ARQUIVO): return {}
     with open(HISTORICO_PRODUTOS_ARQUIVO, 'r', encoding='utf-8') as f:
@@ -94,3 +94,90 @@ def gerar_texto_com_ia(produto):
     except Exception as e:
         print(f"    - Erro ao gerar texto com IA: {e}")
         return f"✨ Confira esta super oferta! ✨\n\n{produto.get('productName')}"
+
+def verificar_link_ativo(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        response = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
+        if response.status_code == 200 and "O produto não existe" not in response.text:
+            return True
+    except requests.exceptions.RequestException:
+        return False
+    return False
+
+# --- 4. LÓGICA PRINCIPAL DO CAÇADOR DE LOJAS ---
+def buscar_ofertas_de_loja(shop_id, historico_ids):
+    print(f"\nBuscando ofertas para o Shop ID: {shop_id}...")
+    ofertas_encontradas = []
+    
+    graphql_query = """query { shopOfferV2(shopId: %d, limit: 20, sortType: 3) { nodes { itemId, productName, priceMin, priceMax, offerLink, productLink, shopName, ratingStar, sales, priceDiscountRate } } }""" % (shop_id)
+
+    timestamp = int(time.time())
+    body = {"query": graphql_query, "variables": {}}
+    payload_str = json.dumps(body, separators=(',', ':'))
+    base_string = f"{SHOPEE_PARTNER_ID}{timestamp}{payload_str}{SHOPEE_API_KEY}"
+    sign = hashlib.sha256(base_string.encode('utf-8')).hexdigest()
+    auth_header = f"SHA256 Credential={SHOPEE_PARTNER_ID}, Timestamp={timestamp}, Signature={sign}"
+    headers = {'Authorization': auth_header, 'Content-Type': 'application/json'}
+
+    try:
+        response = requests.post(SHOPEE_API_URL, data=payload_str, headers=headers)
+        data = response.json()
+        if "errors" in data and data["errors"]:
+            print(f"    Erro Shopee: {data['errors']}")
+            return []
+        
+        product_list = data.get("data", {}).get("shopOfferV2", {}).get("nodes", [])
+        print(f"  - Encontrados {len(product_list)} produtos brutos na loja.")
+
+        for produto in product_list:
+            if int(produto.get('itemId')) in historico_ids:
+                continue
+            link_original = produto.get("productLink")
+            if not link_original or not verificar_link_ativo(link_original):
+                continue
+            ofertas_encontradas.append(produto)
+            
+    except Exception as e:
+        print(f"    - Erro na requisição para a loja {shop_id}: {e}")
+
+    print(f"  - Encontradas {len(ofertas_encontradas)} novas e válidas ofertas para a loja {shop_id}.")
+    return ofertas_encontradas
+
+# --- 5. EXECUÇÃO ---
+if __name__ == "__main__":
+    print("🤖 Robô Caçador de Lojas Iniciado (v1.0 - Operacional) 🤖")
+    historico_completo = carregar_historico()
+    historico_ids = {int(item_data['itemId']) for item_id, item_data in historico_completo.items()}
+
+    todas_as_ofertas_de_loja = []
+    for shop_id in SHOP_IDS_PARA_MONITORAR:
+        novas_ofertas = buscar_ofertas_de_loja(shop_id, historico_ids)
+        todas_as_ofertas_de_loja.extend(novas_ofertas)
+        time.sleep(3)
+    
+    if not todas_as_ofertas_de_loja:
+        print("\nNenhuma nova oferta de loja encontrada neste ciclo.")
+    else:
+        for produto in todas_as_ofertas_de_loja:
+            produto['pontuacao'] = calcular_pontuacao(produto)
+        
+        ofertas_ordenadas = sorted(todas_as_ofertas_de_loja, key=lambda p: p['pontuacao'], reverse=True)
+        
+        print(f"\nPublicando as melhores {QUANTIDADE_DE_POSTS_POR_EXECUCAO} ofertas de loja encontradas...")
+        for produto_final in ofertas_ordenadas[:QUANTIDADE_DE_POSTS_POR_EXECUCAO]:
+            texto_ia = gerar_texto_com_ia(produto_final)
+            loja = produto_final.get('shopName')
+            
+            mensagem = (
+                f"🛍️ **OFERTA ESPECIAL DA LOJA {loja.upper()}** 🛍️\n\n"
+                f"{texto_ia}\n\n"
+                f"<b>💰 Preço:</b> A partir de R$ {produto_final.get('priceMin')}\n"
+                f"<b>⭐ Avaliação:</b> {produto_final.get('ratingStar')} estrelas\n\n"
+                f"<a href='{produto_final.get('offerLink')}'><b>🛒 Ver na Loja</b></a>"
+            )
+
+            if enviar_mensagem_telegram(mensagem):
+                salvar_no_historico(produto_final, historico_completo)
+
+    print("\n✅ Ciclo do Caçador de Lojas finalizado.")
