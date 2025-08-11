@@ -148,7 +148,7 @@ def buscar_ofertas_de_loja(shop_id, historico_ids):
 if __name__ == "__main__":
     print("🤖 Robô Caçador de Lojas Iniciado (v1.0 - Operacional) 🤖")
     historico_completo = carregar_historico()
-    historico_ids = {int(item_data['itemId']) for item_id, item_data in historico_completo.items()}
+    historico_ids = {int(item_id) for item_id in historico_completo.keys()}
 
     todas_as_ofertas_de_loja = []
     for shop_id in SHOP_IDS_PARA_MONITORAR:
