@@ -92,46 +92,60 @@ def enviar_mensagem_telegram(mensagem):
 
 def analisar_e_pontuar_com_ia(produtos_candidatos):
     """
-    Envia uma lista de produtos para a IA para análise, pontuação e geração de texto.
+    Envia uma lista de produtos para a IA em lotes menores para maior robustez.
     """
-    print(f"    - Enviando {len(produtos_candidatos)} candidatos para análise da IA...")
+    print(f"\n[FASE 2] Iniciando Análise com IA para {len(produtos_candidatos)} candidatos...")
     if not produtos_candidatos:
         return []
 
-    dados_para_ia = []
-    for p in produtos_candidatos:
-        dados_para_ia.append({
-            "itemId": p.get('itemId'),
-            "productName": p.get('productName'),
-            "ratingStar": p.get('ratingStar'),
-            "sales": p.get('sales'),
-            "priceDiscountRate": p.get('priceDiscountRate')
-        })
+    TAMANHO_DO_LOTE = 25
+    analise_completa = []
+    
+    # Divide a lista de candidatos em lotes menores
+    lotes = [produtos_candidatos[i:i + TAMANHO_DO_LOTE] for i in range(0, len(produtos_candidatos), TAMANHO_DO_LOTE)]
+    
+    for i, lote in enumerate(lotes):
+        print(f"  - Processando lote {i+1} de {len(lotes)} (com {len(lote)} produtos)...")
+        dados_para_ia = []
+        for p in lote:
+            dados_para_ia.append({
+                "itemId": p.get('itemId'), "productName": p.get('productName'), "ratingStar": p.get('ratingStar'),
+                "sales": p.get('sales'), "priceDiscountRate": p.get('priceDiscountRate')
+            })
 
-    # --- PROMPT APRIMORADO ---
-    prompt = (
-        "Você é um copywriter de elite para um canal de ofertas de grande sucesso no Telegram chamado 'Conexão Descontos'. "
-        "Sua tarefa é analisar uma lista de produtos em formato JSON e, para cada um, criar 3 coisas: uma pontuação, uma justificativa, e um texto de venda.\n\n"
-        "**Regras da Pontuação:**\n"
-        "Para a 'pontuacao' (0 a 100), valorize uma combinação de muitas `sales` e um `ratingStar` alto. Um `priceDiscountRate` alto é um bônus importante. Seja rigoroso.\n\n"
-        "**Regras do Texto de Venda:**\n"
-        "1. **Estrutura:** Crie um **Título Chamativo** curto em negrito com 1-2 emojis, seguido por 1-2 frases focadas em benefícios e urgência.\n"
-        "2. **Conteúdo Obrigatório:** O texto DEVE mencionar o **desconto em porcentagem** (ex: 'com X% OFF!') e a **avaliação em estrelas** (ex: 'com X.X estrelas de avaliação!').\n"
-        "3. **Conteúdo Proibido:** **NÃO mencione o número de vendas.**\n"
-        "4. **Tom:** Seja persuasivo e empolgante.\n\n"
-        f"Analise os seguintes produtos: {json.dumps(dados_para_ia, ensure_ascii=False)}\n\n"
-        "**Formato da Resposta:** Sua resposta deve ser **APENAS** um objeto JSON válido com a chave 'analise_de_produtos', contendo uma lista. Cada objeto na lista deve ter três chaves: 'itemId', 'pontuacao' e 'texto_de_venda'."
-    )
+        prompt = (
+            "Você é um copywriter de elite para um canal de ofertas no Telegram chamado 'Conexão Descontos'. "
+            "Sua tarefa é analisar uma lista de produtos em formato JSON e, para cada um, criar 3 coisas: uma pontuação, uma justificativa, e um texto de venda.\n\n"
+            "**Regras da Pontuação:**\n"
+            "Para a 'pontuacao' (0 a 100), valorize uma combinação de muitas `sales` e um `ratingStar` alto. Um `priceDiscountRate` alto é um bônus importante. Produtos com `ratingStar` abaixo de 4.5 devem receber nota baixa (abaixo de 50).\n\n"
+            "**Regras do Texto de Venda:**\n"
+            "1. **Estrutura:** Crie um **Título Chamativo** curto em negrito com 1-2 emojis, seguido por 1-2 frases focadas em benefícios e urgência.\n"
+            "2. **Conteúdo Obrigatório:** O texto DEVE mencionar o **desconto em porcentagem** (ex: 'com X% OFF!') e a **avaliação em estrelas** (ex: 'com X.X estrelas de avaliação!').\n"
+            "3. **Conteúdo Proibido:** **NÃO mencione o número de vendas.**\n"
+            "4. **Formato da Resposta:** Sua resposta deve ser **APENAS** um objeto JSON válido com a chave 'analise_de_produtos', contendo uma lista. Cada objeto na lista deve ter três chaves: 'itemId' (do tipo numérico), 'pontuacao' (de 0 a 100) e 'texto_de_venda' (o texto persuasivo)."
+            f"\n\nAnalise os seguintes produtos: {json.dumps(dados_para_ia, ensure_ascii=False)}"
+        )
 
-    try:
-        response = model.generate_content(prompt)
-        texto_limpo = response.text.strip().replace("```json", "").replace("```", "")
-        resultado_ia = json.loads(texto_limpo)
-        print("    - Análise da IA recebida com sucesso.")
-        return resultado_ia.get('analise_de_produtos', [])
-    except Exception as e:
-        print(f"    - ERRO CRÍTICO ao analisar com a IA: {e}")
-        return []
+        try:
+            response = model.generate_content(prompt)
+            texto_limpo = response.text.strip().replace("```json", "").replace("```", "")
+            resultado_ia_lote = json.loads(texto_limpo)
+            
+            if resultado_ia_lote and 'analise_de_produtos' in resultado_ia_lote:
+                print(f"    -> Lote {i+1} analisado com sucesso pela IA.")
+                analise_completa.extend(resultado_ia_lote['analise_de_produtos'])
+            else:
+                print(f"    -> Lote {i+1} retornou uma resposta vazia ou malformada da IA.")
+
+        except Exception as e:
+            print(f"    -> ERRO CRÍTICO ao analisar o lote {i+1} com a IA: {e}")
+            # Continua para o próximo lote
+            continue
+        
+        time.sleep(5) # Pausa entre os lotes para não sobrecarregar a API
+
+    print(f"Análise da IA finalizada. {len(analise_completa)} produtos foram analisados com sucesso.")
+    return analise_completa
     
 def verificar_link_ativo(url):
     try:
@@ -196,7 +210,7 @@ def coletar_ofertas_candidatas(palavras_chave, lojas_favoritas, paginas_a_verifi
                 if not product_list: break
                 for produto in product_list:
                     avaliacao_str = produto.get('ratingStar', "0")
-                    if not avaliacao_str or float(avaliacao_str) < 4.5:
+                    if not avaliacao_str or float(avaliacao_str) < 4.0:
                         continue # Pula produtos com avaliação baixa
 
                     if int(produto.get('itemId')) in historico_ids or not verificar_link_ativo(produto.get("productLink")):
