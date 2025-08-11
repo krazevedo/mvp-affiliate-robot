@@ -24,7 +24,7 @@ QUANTIDADE_DE_POSTS_POR_EXECUCAO = 3
 PAGINAS_A_VERIFICAR = 2
 LIMIAR_DE_DESCONTO_REPOSTAGEM = 0.15
 COOLDOWN_REPOSTAGEM_DIAS = 7
-LIMIAR_SIMILARIDADE_DUPLICATA = 85
+LIMIAR_SIMILARIDADE_DUPLICATA = 80
 LOJAS_FAVORITAS_IDS = [369632653, 288420684, 286277644, 1157280425, 1315886500, 349591196, 886950101] # Adicione os IDs de suas lojas de confiança aqui
 
 TEMPLATES_MENSAGENS = [ # Templates para novas ofertas
@@ -90,27 +90,47 @@ def enviar_mensagem_telegram(mensagem):
         print(f"Erro de conexão com a API do Telegram: {e}")
         return False
 
-def calcular_pontuacao(produto):
-    try:
-        pontuacao = 0.0
-        if not produto.get('ratingStar') or float(produto.get('ratingStar', "0")) < 4.0: return 0.0
-        desconto = produto.get('priceDiscountRate'); avaliacao = float(produto.get('ratingStar', "0")); vendas = produto.get('sales')
-        if desconto is not None: pontuacao += float(desconto) * 1.5
-        if avaliacao is not None: pontuacao += avaliacao * 1.0
-        if vendas is not None and vendas > 0: pontuacao += math.log10(vendas) * 0.8
-        return pontuacao
-    except (ValueError, TypeError): return 0.0
+def analisar_e_pontuar_com_ia(produtos_candidatos):
+    """
+    Envia uma lista de produtos para a IA para análise, pontuação e geração de texto.
+    Este é o novo "cérebro" do robô.
+    """
+    print(f"    - Enviando {len(produtos_candidatos)} candidatos para análise da IA...")
+    if not produtos_candidatos:
+        return []
 
-def gerar_texto_com_ia(produto):
-    print(f"    - Gerando texto com IA para '{produto.get('productName')}'...")
+    # Prepara os dados dos produtos para enviar para a IA
+    dados_para_ia = []
+    for p in produtos_candidatos:
+        dados_para_ia.append({
+            "itemId": p.get('itemId'),
+            "productName": p.get('productName'),
+            "ratingStar": p.get('ratingStar'),
+            "sales": p.get('sales'),
+            "priceDiscountRate": p.get('priceDiscountRate')
+        })
+
+    prompt = (
+        "Você é um Curador Especialista em E-commerce para um canal de ofertas no Brasil chamado 'Conexão Descontos'. "
+        "Sua tarefa é analisar uma lista de produtos em formato JSON e agir como um filtro de qualidade para selecionar os melhores para postar.\n\n"
+        "Regras da Análise:\n"
+        "1. Para cada produto, calcule uma 'pontuacao' de 0 a 100. Considere a combinação de avaliação (`ratingStar`), popularidade (`sales`), e a taxa de desconto (`priceDiscountRate`). Pense como um humano: um produto com 4.7 estrelas e 5000 vendas é geralmente melhor que um com 5.0 estrelas e apenas 10 vendas. Um desconto alto em um produto mal avaliado (abaixo de 4.0) deve receber nota baixa.\n"
+        "2. Para cada produto, crie um 'texto_de_venda' curto (máximo 3 frases), empolgante e persuasivo, usando emojis. Foque nos benefícios.\n\n"
+        f"Analise os seguintes produtos: {json.dumps(dados_para_ia, ensure_ascii=False)}\n\n"
+        "Sua resposta deve ser **APENAS** um objeto JSON válido. A chave principal deve ser 'analise_de_produtos'. O valor deve ser uma lista de objetos, onde cada objeto representa um produto analisado e contém três chaves: 'itemId' (do produto original), 'pontuacao' (a nota de 0 a 100 que você atribuiu), e 'texto_de_venda' (o texto persuasivo que você criou)."
+    )
+
     try:
-        prompt = (f"Você é um especialista em marketing para um canal de ofertas. Crie uma chamada curta e empolgante (máximo 3 frases, use emojis) para o produto: '{produto.get('productName')}'. Foque nos benefícios.")
         response = model.generate_content(prompt)
-        return response.text.strip()
+        # Limpa a resposta para extrair apenas o JSON
+        texto_limpo = response.text.strip().replace("```json", "").replace("```", "")
+        resultado_ia = json.loads(texto_limpo)
+        print("    - Análise da IA recebida com sucesso.")
+        return resultado_ia.get('analise_de_produtos', [])
     except Exception as e:
-        print(f"    - Erro ao gerar texto com IA: {e}")
-        return f"✨ Confira esta super oferta! ✨\n\n{produto.get('productName')}"
-
+        print(f"    - ERRO CRÍTICO ao analisar com a IA: {e}")
+        return []
+    
 def verificar_link_ativo(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
@@ -120,9 +140,32 @@ def verificar_link_ativo(url):
         return False
 
 def eh_duplicata_por_nome(novo_produto, historico_valores):
+    """
+    Verifica se um produto é muito similar a algo já postado,
+    limpando os nomes antes da comparação para maior precisão.
+    """
+    
+    def limpar_nome(nome):
+        """Remove palavras genéricas e formata o nome para comparação."""
+        nome = nome.lower()
+        palavras_a_remover = [
+            'original', 'promoção', 'oferta', 'envio rápido', 'premium',
+            'com fio', 'sem fio', 'para', 'com', 'de', 'a', 'o', 'e'
+        ]
+        for palavra in palavras_a_remover:
+            nome = nome.replace(palavra, '')
+        # Remove espaços extras que sobraram
+        return " ".join(nome.split())
+
+    nome_novo_limpo = limpar_nome(novo_produto.get('productName', ''))
+    
     for produto_antigo in historico_valores:
-        if fuzz.token_sort_ratio(novo_produto.get('productName'), produto_antigo.get('productName')) > LIMIAR_SIMILARIDADE_DUPLICATA:
-            print(f"    -> Duplicata por nome encontrada com '{produto_antigo.get('productName')}'")
+        nome_antigo_limpo = limpar_nome(produto_antigo.get('productName', ''))
+        
+        similaridade = fuzz.token_sort_ratio(nome_novo_limpo, nome_antigo_limpo)
+        
+        if similaridade > LIMIAR_SIMILARIDADE_DUPLICATA:
+            print(f"    -> Duplicata por nome encontrada! Similaridade de {similaridade}% entre '{novo_produto.get('productName')}' e '{produto_antigo.get('productName')}'")
             return True
     return False
 
@@ -160,61 +203,46 @@ def coletar_ofertas_candidatas(palavras_chave, lojas_favoritas, paginas_a_verifi
 
 # --- 5. EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
-    print(f"\n🤖 Robô Ecossistema Iniciado (v20)")
+    print(f"\n🤖 Robô Curador com IA Iniciado (v21 - IA-Native)")
+    
     historico = carregar_historico()
     historico_ids = {int(item_id) for item_id in historico.keys()}
-    print(f"Carregado histórico com {len(historico)} itens para vigilância.")
+    print(f"Carregado histórico com {len(historico)} itens.")
 
+    # FASE 1: Coleta
     candidatos = coletar_ofertas_candidatas(PALAVRAS_CHAVE_DE_BUSCA, LOJAS_FAVORITAS_IDS, PAGINAS_A_VERIFICAR, historico_ids)
     
-    # FASE 2: Análise e Separação
-    print("\n[FASE 2] Analisando ofertas: Novidades vs. Queda de Preço...")
-    novas_ofertas_candidatas = []
-    alertas_de_preco = []
-    cooldown_segundos = COOLDOWN_REPOSTAGEM_DIAS * 24 * 60 * 60
-
-    for produto in candidatos:
-        item_id_str = str(produto.get('itemId'))
-        if item_id_str in historico:
-            preco_antigo = historico[item_id_str].get('priceMin', float('inf')); preco_novo_str = produto.get('priceMin')
-            if not preco_novo_str: continue
-            preco_novo = float(preco_novo_str); ultimo_post = historico[item_id_str].get('lastPostedTimestamp', 0)
-            if preco_novo < (preco_antigo * (1 - LIMIAR_DE_DESCONTO_REPOSTAGEM)) and (time.time() - ultimo_post) > cooldown_segundos:
-                produto['preco_antigo'] = preco_antigo; produto['desconto_percentual'] = round((1 - (preco_novo / preco_antigo)) * 100)
-                alertas_de_preco.append(produto)
-                print(f"  -> ALERTA DE PREÇO! '{produto['productName']}' de R${preco_antigo:.2f} por R${preco_novo:.2f}")
-        else:
-            if not eh_duplicata_por_nome(produto, historico.values()):
-                novas_ofertas_candidatas.append(produto)
-
-    # FASE 3: Pontuação e Ordenação
-    print(f"\n[FASE 3] Pontuando e Ordenando {len(novas_ofertas_candidatas)} Novidades...")
-    for produto in novas_ofertas_candidatas:
-        produto['pontuacao'] = calcular_pontuacao(produto)
-    novas_ofertas_ordenadas = sorted(novas_ofertas_candidatas, key=lambda p: p.get('pontuacao', 0), reverse=True)
-    
-    lista_final_para_postar = alertas_de_preco + novas_ofertas_ordenadas
-    
-    # FASE 4: Publicação
-    if not lista_final_para_postar:
-        print("Nenhuma oferta relevante para postar neste ciclo.")
+    # FASE 2: Análise, Pontuação e Geração de Texto pela IA
+    if not candidatos:
+        print("Nenhuma nova oferta encontrada para análise. Ciclo finalizado.")
     else:
-        print(f"\n[FASE 4] Publicando as {QUANTIDADE_DE_POSTS_POR_EXECUCAO} melhores ofertas...")
-        postagens_feitas = 0
-        for produto in lista_final_para_postar:
-            if postagens_feitas >= QUANTIDADE_DE_POSTS_POR_EXECUCAO: break
+        analise_ia = analisar_e_pontuar_com_ia(candidatos)
+        
+        if not analise_ia:
+            print("A IA não retornou uma análise válida. Ciclo finalizado.")
+        else:
+            # Mapeia a análise da IA de volta para os produtos candidatos
+            mapa_analise = {analise['itemId']: analise for analise in analise_ia}
+            ofertas_finais = []
+            for produto in candidatos:
+                if produto['itemId'] in mapa_analise:
+                    produto['pontuacao'] = mapa_analise[produto['itemId']].get('pontuacao', 0)
+                    produto['texto_ia'] = mapa_analise[produto['itemId']].get('texto_de_venda', '')
+                    ofertas_finais.append(produto)
             
-            if 'preco_antigo' in produto:
-                template = random.choice(TEMPLATES_ALERTA_PRECO)
-                produto['priceMin'] = float(produto.get('priceMin', 0))
-                mensagem = template.format(**produto)
-            else:
-                template = random.choice(TEMPLATES_MENSAGENS)
-                texto_ia = gerar_texto_com_ia(produto)
-                mensagem = template.format(texto_ia=texto_ia, **produto)
+            # Ordena pela pontuação dada pela IA
+            ofertas_ordenadas = sorted(ofertas_finais, key=lambda p: p['pontuacao'], reverse=True)
 
-            if enviar_mensagem_telegram(mensagem):
-                salvar_no_historico(produto, historico)
-                postagens_feitas += 1
-    
-    print("\n✅ Ciclo do Robô finalizado.")
+            # FASE 3: Publicação
+            print(f"\n[FASE 3] Publicando as {QUANTIDADE_DE_POSTS_POR_EXECUCAO} melhores ofertas analisadas pela IA...")
+            for produto_final in ofertas_ordenadas[:QUANTIDADE_DE_POSTS_POR_EXECUCAO]:
+                mensagem = (
+                    f"{produto_final['texto_ia']}\n\n"
+                    f"<b>💰 Preço:</b> A partir de R$ {produto_final.get('priceMin')}\n"
+                    f"<b>🏪 Loja:</b> {produto_final.get('shopName')}\n"
+                    f"<a href='{produto_final.get('offerLink')}'><b>👉 Ver Oferta e Comprar</b></a>"
+                )
+                if enviar_mensagem_telegram(mensagem):
+                    salvar_no_historico(produto_final, historico)
+
+    print("\n✅ Ciclo do Robô Curador com IA finalizado.")
