@@ -24,7 +24,7 @@ print("Variáveis de ambiente carregadas com sucesso.")
 # --- 2. PARÂMETROS DO CAÇADOR DE LOJAS ---
 HISTORICO_OFERTAS_ARQUIVO = "historico_lojas.json"
 # Lembre-se de substituir pelos IDs de LOJA que você pesquisou
-SHOP_IDS_PARA_MONITORAR = [84499012] # Exemplo de ID da documentação
+SHOP_IDS_PARA_MONITORAR = [369632653, 288420684, 286277644, 1157280425, 1315886500, 349591196, 886950101] # Exemplo de ID da documentação
 QUANTIDADE_DE_POSTS_POR_EXECUCAO = 2
 
 # --- 3. FUNÇÕES AUXILIARES ---
